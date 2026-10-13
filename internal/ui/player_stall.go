@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/anhoder/foxful-cli/model"
 
 	"github.com/go-musicfox/go-musicfox/internal/player"
+	"github.com/go-musicfox/go-musicfox/internal/track"
 	"github.com/go-musicfox/go-musicfox/internal/types"
 	"github.com/go-musicfox/go-musicfox/utils/notify"
 )
@@ -86,37 +88,38 @@ func (g *stallGuard) pending(songID int64) (uint64, bool) {
 	return g.gen, true
 }
 
-// check evaluates generation gen. A paused song is re-checked later without
+// check evaluates generation gen and returns the action plus, for a retry,
+// its 1-based attempt number. A paused song is re-checked later without
 // consuming a try; a started song clears all counters.
-func (g *stallGuard) check(gen uint64, started, paused bool) stallAction {
+func (g *stallGuard) check(gen uint64, started, paused bool) (stallAction, int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if gen != g.gen || g.timer == nil {
-		return stallNone
+		return stallNone, 0
 	}
 	if paused {
 		g.stopTimerLocked()
 		fire, timeout := g.fire, g.timeout
 		g.timer = time.AfterFunc(timeout, func() { fire(gen) })
-		return stallNone
+		return stallNone, 0
 	}
 	g.gen++
 	g.stopTimerLocked()
 	if started {
 		g.tries, g.skips = 0, 0
-		return stallNone
+		return stallNone, 0
 	}
 	g.tries++
 	if g.tries <= stallMaxRetries {
-		return stallRetry
+		return stallRetry, g.tries
 	}
 	g.tries = 0
 	g.skips++
 	if g.skips >= stallMaxSkips {
 		g.skips = 0
-		return stallGiveUp
+		return stallGiveUp, 0
 	}
-	return stallSkip
+	return stallSkip, 0
 }
 
 func (g *stallGuard) stopTimerLocked() {
@@ -139,12 +142,20 @@ func (p *Player) watchStartup(songID int64, url string) {
 // handleStreamFailure is the fast path: the background cache download hits the
 // same CDN as the engine, so its failure while the song is still at 0:00 means
 // the engine is almost certainly stuck too.
-func (p *Player) handleStreamFailure(songID int64, err error) {
-	gen, ok := p.stall.pending(songID)
+func (p *Player) handleStreamFailure(f track.StreamFailure) {
+	if f.HostMarkedBad {
+		notify.Toast(notify.NotifyContent{
+			Title:   "CDN 节点无法连接",
+			Text:    f.Host + "，后续歌曲将自动改用备用节点",
+			Level:   notify.ToastWarning,
+			Timeout: 6 * time.Second,
+		})
+	}
+	gen, ok := p.stall.pending(f.SongID)
 	if !ok || p.PassedTime() > 0 {
 		return
 	}
-	slog.Warn("Stream failed before playback started, replaying", "songId", songID, "error", err)
+	slog.Warn("Stream failed before playback started, replaying", "songId", f.SongID, "error", f.Err)
 	p.checkStall(gen)
 }
 
@@ -153,14 +164,26 @@ func (p *Player) checkStall(gen uint64) {
 	// A stopped song already left startup (ended or stopped by the user), so
 	// there is nothing to recover; treat it like a started one.
 	started := p.PassedTime() > 0 || state == types.Stopped
-	action := p.stall.check(gen, started, state == types.Paused)
+	action, attempt := p.stall.check(gen, started, state == types.Paused)
 	song := p.CurSong()
 	switch action {
 	case stallRetry:
-		slog.Warn("Playback stalled, replaying with a fresh URL", "songId", song.Id, "song", song.Name)
+		slog.Warn("Playback stalled, replaying with a fresh URL", "songId", song.Id, "song", song.Name, "attempt", attempt)
+		notify.Toast(notify.NotifyContent{
+			Title:   fmt.Sprintf("加载卡住，正在重试 (%d/%d)", attempt, stallMaxRetries),
+			Text:    song.Name,
+			Level:   notify.ToastInfo,
+			Timeout: 3 * time.Second,
+		})
 		p.replayStalled()
 	case stallSkip:
 		slog.Warn("Playback stalled repeatedly, skipping song", "songId", song.Id, "song", song.Name)
+		notify.Toast(notify.NotifyContent{
+			Title:   "无法加载，已跳过",
+			Text:    song.Name,
+			Level:   notify.ToastWarning,
+			Timeout: 5 * time.Second,
+		})
 		p.NextSong(false)
 	case stallGiveUp:
 		slog.Error("Playback stalled on several songs in a row, stopping", "songId", song.Id)

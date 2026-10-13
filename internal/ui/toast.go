@@ -29,6 +29,7 @@ func buildToastNotificationSpec(content notify.NotifyContent, level notify.Toast
 		Level:   toastLevelToModel(level),
 		Title:   content.Title,
 		Message: content.Text,
+		Timeout: content.Timeout,
 	}
 	if content.ActionLabel == "" || content.Url == "" {
 		return spec

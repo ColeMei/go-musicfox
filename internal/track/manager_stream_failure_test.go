@@ -23,11 +23,8 @@ func TestBackgroundCacheReportsStreamFailure(t *testing.T) {
 	wantErr := errors.New("read: connection reset by peer")
 	m := &Manager{fetcher: &failingStreamFetcher{err: wantErr}}
 
-	var gotID int64
-	var gotErr error
-	m.SetStreamFailureHandler(func(songID int64, err error) {
-		gotID, gotErr = songID, err
-	})
+	var got StreamFailure
+	m.SetStreamFailureHandler(func(f StreamFailure) { got = f })
 
 	m.backgroundCache(context.Background(), PlayableSource{
 		Song: structs.Song{Id: 42},
@@ -35,7 +32,7 @@ func TestBackgroundCacheReportsStreamFailure(t *testing.T) {
 		Info: &netease.PlayableInfo{URL: "http://m801.music.126.net/x.flac", MusicType: "flac"},
 	})
 
-	if gotID != 42 || !errors.Is(gotErr, wantErr) {
-		t.Fatalf("handler got (%d, %v), want (42, %v)", gotID, gotErr, wantErr)
+	if got.SongID != 42 || !errors.Is(got.Err, wantErr) {
+		t.Fatalf("handler got (%d, %v), want (42, %v)", got.SongID, got.Err, wantErr)
 	}
 }

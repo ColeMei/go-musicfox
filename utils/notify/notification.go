@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/gen2brain/beeep"
@@ -131,6 +132,13 @@ type NotifyContent struct {
 	Level ToastLevel
 	// ActionLabel 非空且 Url 非空时，TUI toast 显示打开链接按钮。
 	ActionLabel string
+	// Timeout 为 TUI toast 显示时长，0 使用默认值（Warning/Error 为常驻）。
+	Timeout time.Duration
+}
+
+// Toast 仅弹出 TUI 内 toast，不发送桌面通知，用于播放重试等高频状态提示。
+func Toast(content NotifyContent) {
+	emitToast(content, content.Level)
 }
 
 func Notify(content NotifyContent) {

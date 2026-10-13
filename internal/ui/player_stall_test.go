@@ -18,7 +18,7 @@ func TestStallGuardRetriesThenSkipsThenGivesUp(t *testing.T) {
 	var got []stallAction
 	for song := int64(1); song <= stallMaxSkips; song++ {
 		for {
-			action := g.check(armNoFire(&g, song), false, false)
+			action, _ := g.check(armNoFire(&g, song), false, false)
 			got = append(got, action)
 			if action != stallRetry {
 				break
@@ -47,15 +47,25 @@ func TestStallGuardRetriesThenSkipsThenGivesUp(t *testing.T) {
 	}
 }
 
+func TestStallGuardReportsAttempt(t *testing.T) {
+	var g stallGuard
+	for want := 1; want <= stallMaxRetries; want++ {
+		action, attempt := g.check(armNoFire(&g, 1), false, false)
+		if action != stallRetry || attempt != want {
+			t.Fatalf("got (%v, %d), want (retry, %d)", action, attempt, want)
+		}
+	}
+}
+
 func TestStallGuardStartedResetsCounters(t *testing.T) {
 	var g stallGuard
 	for range stallMaxRetries {
-		g.check(armNoFire(&g, 1), false, false)
+		_, _ = g.check(armNoFire(&g, 1), false, false)
 	}
-	if action := g.check(armNoFire(&g, 1), true, false); action != stallNone {
+	if action, _ := g.check(armNoFire(&g, 1), true, false); action != stallNone {
 		t.Fatalf("started: got %v, want none", action)
 	}
-	if action := g.check(armNoFire(&g, 1), false, false); action != stallRetry {
+	if action, _ := g.check(armNoFire(&g, 1), false, false); action != stallRetry {
 		t.Fatalf("after start, a new stall should retry from scratch, got %v", action)
 	}
 }
@@ -63,9 +73,9 @@ func TestStallGuardStartedResetsCounters(t *testing.T) {
 func TestStallGuardSongChangeResetsTries(t *testing.T) {
 	var g stallGuard
 	for range stallMaxRetries {
-		g.check(armNoFire(&g, 1), false, false)
+		_, _ = g.check(armNoFire(&g, 1), false, false)
 	}
-	if action := g.check(armNoFire(&g, 2), false, false); action != stallRetry {
+	if action, _ := g.check(armNoFire(&g, 2), false, false); action != stallRetry {
 		t.Fatalf("new song should get fresh retries, got %v", action)
 	}
 }
@@ -74,7 +84,7 @@ func TestStallGuardIgnoresStaleGeneration(t *testing.T) {
 	var g stallGuard
 	stale := armNoFire(&g, 1)
 	armNoFire(&g, 2)
-	if action := g.check(stale, false, false); action != stallNone {
+	if action, _ := g.check(stale, false, false); action != stallNone {
 		t.Fatalf("stale generation acted: %v", action)
 	}
 	if _, ok := g.pending(1); ok {
@@ -88,11 +98,11 @@ func TestStallGuardIgnoresStaleGeneration(t *testing.T) {
 func TestStallGuardCheckConsumesGeneration(t *testing.T) {
 	var g stallGuard
 	gen := armNoFire(&g, 1)
-	if action := g.check(gen, false, false); action != stallRetry {
+	if action, _ := g.check(gen, false, false); action != stallRetry {
 		t.Fatalf("got %v, want retry", action)
 	}
 	// Timer and fast path racing on the same generation must act only once.
-	if action := g.check(gen, false, false); action != stallNone {
+	if action, _ := g.check(gen, false, false); action != stallNone {
 		t.Fatalf("second check of same generation acted: %v", action)
 	}
 }
@@ -100,13 +110,13 @@ func TestStallGuardCheckConsumesGeneration(t *testing.T) {
 func TestStallGuardPausedKeepsWatching(t *testing.T) {
 	var g stallGuard
 	gen := armNoFire(&g, 1)
-	if action := g.check(gen, false, true); action != stallNone {
+	if action, _ := g.check(gen, false, true); action != stallNone {
 		t.Fatalf("paused: got %v, want none", action)
 	}
 	if _, ok := g.pending(1); !ok {
 		t.Fatal("paused song should stay pending")
 	}
-	if action := g.check(gen, false, false); action != stallRetry {
+	if action, _ := g.check(gen, false, false); action != stallRetry {
 		t.Fatalf("after resume still stalled: got %v, want retry", action)
 	}
 }
@@ -125,7 +135,7 @@ func TestStallGuardTimerFires(t *testing.T) {
 	g.arm(1, true, 10*time.Millisecond, func(gen uint64) { fired <- gen })
 	select {
 	case gen := <-fired:
-		if action := g.check(gen, false, false); action != stallRetry {
+		if action, _ := g.check(gen, false, false); action != stallRetry {
 			t.Fatalf("got %v, want retry", action)
 		}
 	case <-time.After(time.Second):

@@ -170,7 +170,7 @@ type Player interface {
 ### 其他模块
 
 - **歌词**：LRC/YRC 格式，支持 smooth/wave/glow 渲染模式；`internal/ui/lyric_layout.go` 按行布局：`[main.lyric] maxLines`（默认 5，取不超过可用高度的奇数，动态菜单模式固定 5）控制歌词行数；整首歌最宽的「原文 [翻译]」超出歌词区宽度时，该曲所有翻译改为原文下一行显示（按曲决定，滚动时布局稳定），否则保持同行；未匹配的云盘歌曲（含旧播放快照）优先通过云盘歌词接口获取内嵌歌词，失败时回退普通歌曲歌词接口
-- **起播卡死自愈**：`internal/ui/player_stall.go` 的 `stallGuard` 在远程歌曲交给引擎后监视起播；`PassedTime()` 6 秒仍为 0（或 `track.Manager.SetStreamFailureHandler` 回调报告后台缓存拉流失败）即重新解析 URL 重播（网易云常换 CDN 主机，如被网络 sinkhole 的 m801 换到 m701），单曲最多 5 次后跳下一首，连续 3 首卡死则暂停并 Toast 提示；暂停时不消耗重试，本地/缓存源不监视。
+- **起播卡死自愈**：`internal/ui/player_stall.go` 的 `stallGuard` 在远程歌曲交给引擎后监视起播；`PassedTime()` 6 秒仍为 0（或 `track.Manager.SetStreamFailureHandler` 回调报告后台缓存拉流失败）即重新解析 URL 重播，单曲最多 5 次后跳下一首，连续 3 首卡死则暂停并通知；重试/跳过/CDN 切换以 `notify.Toast`（仅 TUI toast、带 `Timeout`，不发桌面通知）提示；暂停时不消耗重试，本地/缓存源不监视。`internal/track/cdn_fallback.go`：后台缓存拉流遇传输层错误（`*url.Error`，如被校园网 DNS sinkhole 的 m801 连接重置）即标记该主机不可用 30 分钟，之后解析出的该主机 URL 改写为同路径的备用主机（m801↔m701，二者 CNAME 到同一 CDN）；失败回调在 singleflight `Do` 返回后触发，避免重播时的缓存请求被合并吞掉。
 - **播放列表**：列表循环/顺序/单曲循环/随机/无限随机/智能心动模式
 - **远程控制**：MPRIS(linux)、Now Playing(macOS)、System Media(Windows)。macOS 侧 `internal/macdriver/mediaplayer` 与 `internal/macdriver/cocoa/unnotifications.go` 的框架加载（Dlopen）失败不 panic 静默降级：MediaPlayer.framework 需 macOS 10.12.2+、UserNotifications.framework 需 10.14+，旧系统上 class 查找得 nil、objc 消息发送安全返回 0，对应功能（Now Playing 远程控制/系统通知）自动禁用而不影响主应用启动
 - **状态栏组件**：`model.DefaultStatusBar.Components` 可注入任意 `StatusBarComponent` 到居中区域；展示项只实现 `View`，可点击项额外实现 `InteractiveStatusBarComponent`，以自身局部坐标处理命中和事件。状态栏负责布局、边界与指针，不持有业务回调。播放队列适配器的 `musicfox` 前缀自行打开 `https://github.com/go-musicfox/go-musicfox`，队列位置与音质文本不触发。

@@ -48,7 +48,8 @@ type Manager struct {
 	sfGroup     singleflight.Group
 	cloudUserID atomic.Int64
 
-	streamFailureHandler atomic.Pointer[func(songID int64, err error)]
+	cdn                  cdnFallback
+	streamFailureHandler atomic.Pointer[func(StreamFailure)]
 }
 
 // ManagerOption 是用于配置 Manager 的函数类型。
@@ -147,6 +148,15 @@ func (m *Manager) ResolvePlayableSource(ctx context.Context, song structs.Song) 
 	source, err := m.resolveSongSource(ctx, song)
 	if err != nil {
 		return PlayableSource{}, err
+	}
+
+	if source.Type == SourceRemote && source.Info != nil {
+		if rewritten, ok := m.cdn.rewrite(source.Info.URL); ok {
+			slog.Info("Rewrote song URL away from unreachable CDN host", "songId", source.Id, "url", rewritten)
+			info := *source.Info
+			info.URL = rewritten
+			source.Info = &info
+		}
 	}
 
 	if source.Type == SourceRemote && !m.cacher.IsDisabled() {
@@ -276,7 +286,7 @@ func (m *Manager) SetCloudUserID(userID int64) {
 // SetStreamFailureHandler registers a callback invoked when the background
 // cache fails to open a song's remote stream. The engine streams the same URL,
 // so callers use it as an early signal that playback is stuck.
-func (m *Manager) SetStreamFailureHandler(handler func(songID int64, err error)) {
+func (m *Manager) SetStreamFailureHandler(handler func(StreamFailure)) {
 	m.streamFailureHandler.Store(&handler)
 }
 
@@ -354,14 +364,20 @@ func (m *Manager) resolveSongSource(ctx context.Context, song structs.Song) (Pla
 
 func (m *Manager) backgroundCache(ctx context.Context, source PlayableSource) {
 	cacheKey := fmt.Sprintf("song-cache-%d", source.Id)
+	// Report after Do returns: a handler that replays the song re-enters
+	// backgroundCache, which singleflight would otherwise fold into this call.
+	var streamErr error
+	defer func() {
+		if streamErr != nil {
+			m.reportStreamFailure(source, streamErr)
+		}
+	}()
 	m.sfGroup.Do(cacheKey, func() (any, error) {
 		slog.Debug("Starting background caching...", "songId", source.Id)
 		stream, err := m.fetcher.FetchStream(ctx, source)
 		if err != nil {
 			slog.Error("Background cache: fetch stream failed", "songId", source.Id, "error", err)
-			if handler := m.streamFailureHandler.Load(); handler != nil {
-				(*handler)(source.Id, err)
-			}
+			streamErr = err
 			return nil, err
 		}
 		defer stream.Close()
@@ -374,6 +390,16 @@ func (m *Manager) backgroundCache(ctx context.Context, source PlayableSource) {
 		}
 		return nil, err
 	})
+}
+
+func (m *Manager) reportStreamFailure(source PlayableSource, err error) {
+	host, first := m.cdn.markBad(source.Info.URL, err)
+	if first {
+		slog.Warn("Marked CDN host unreachable", "host", host, "error", err)
+	}
+	if handler := m.streamFailureHandler.Load(); handler != nil {
+		(*handler)(StreamFailure{SongID: source.Id, Host: host, HostMarkedBad: first, Err: err})
+	}
 }
 
 func (m *Manager) persistCachedSource(ctx context.Context, source PlayableSource) (string, error) {
