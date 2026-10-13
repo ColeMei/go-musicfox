@@ -42,9 +42,10 @@ type LyricRenderer struct {
 	lyricService *lyric.Service
 
 	isVisible         bool
-	lyricLines        int // 3 or 5
+	lyricLines        int // rows available to lyrics (odd, >= 3)
 	lyricStartRow     int
-	lyrics            []string // Dynamic-size slice to hold lines for rendering
+	lyrics            []lyricEntry // lyricLines entries centred on the current one
+	inlineWidth       int          // widest "text [trans]" in the song; wider than the block stacks translations
 	lyricNowScrollBar *app.XScrollBar
 	currentTimeMs     int64     // Current playback time in milliseconds for YRC rendering
 	lastViewTime      time.Time // For debug logging
@@ -81,13 +82,19 @@ func (r *LyricRenderer) prepareYRCLines(state lyric.State, centerIndex int) {
 
 	// Fill current YRC line with the same offset used by lyric service indexing.
 	currentLine := state.YRCLines[index]
-	r.lyrics[centerIndex] = r.buildYRCLineString(currentLine, r.currentTimeMs+state.OffsetMs, state.ShowTranslation)
+	r.lyrics[centerIndex] = lyricEntry{
+		text:  r.buildYRCLineString(currentLine, r.currentTimeMs+state.OffsetMs, false),
+		trans: yrcTranslation(currentLine, state.ShowTranslation),
+	}
 
 	// Fill previous YRC lines
 	for i := 1; i <= centerIndex; i++ {
 		if index-i >= 0 {
 			prevLine := state.YRCLines[index-i]
-			r.lyrics[centerIndex-i] = r.buildYRCLineString(prevLine, -1, state.ShowTranslation) // No highlight for previous lines
+			r.lyrics[centerIndex-i] = lyricEntry{ // No highlight for previous lines
+				text:  r.buildYRCLineString(prevLine, -1, false),
+				trans: yrcTranslation(prevLine, state.ShowTranslation),
+			}
 		}
 	}
 
@@ -95,7 +102,10 @@ func (r *LyricRenderer) prepareYRCLines(state lyric.State, centerIndex int) {
 	for i := 1; i < r.lyricLines-centerIndex; i++ {
 		if index+i < len(state.YRCLines) {
 			nextLine := state.YRCLines[index+i]
-			r.lyrics[centerIndex+i] = r.buildYRCLineString(nextLine, -1, state.ShowTranslation) // No highlight for next lines
+			r.lyrics[centerIndex+i] = lyricEntry{ // No highlight for next lines
+				text:  r.buildYRCLineString(nextLine, -1, false),
+				trans: yrcTranslation(nextLine, state.ShowTranslation),
+			}
 		}
 	}
 }
@@ -189,11 +199,7 @@ func (r *LyricRenderer) Update(msg tea.Msg, a *model.App) {
 	}
 
 	endRow := r.netease.EffectiveWindowHeight() - EndRowMargin
-	if spaceHeight >= FullLyricLines {
-		r.lyricLines = FullLyricLines
-	} else {
-		r.lyricLines = CompactLyricLines
-	}
+	r.lyricLines = lyricLineCount(spaceHeight, lyricMaxLines())
 	r.lyricStartRow = (main.MenuBottomRow() + specLines + endRow - r.lyricLines) / 2
 }
 
@@ -308,11 +314,12 @@ func (r *LyricRenderer) View(a *model.App, main *model.Main) (view string, lines
 // prepareLyricLines fetches the latest state from the service and prepares the `r.lyrics` array for rendering.
 func (r *LyricRenderer) prepareLyricLines() {
 	state := r.lyricService.State()
-	r.lyrics = make([]string, r.lyricLines) // Allocate based on current lyric line count
+	r.lyrics = make([]lyricEntry, r.lyricLines) // Allocate based on current lyric line count
 
 	if !state.IsRunning {
 		return
 	}
+	r.inlineWidth = songInlineWidth(state)
 
 	centerIndex := (r.lyricLines - 1) / 2
 
@@ -369,15 +376,12 @@ func (r *LyricRenderer) renderLRCWithMode(state lyric.State, centerIndex int, cu
 		}
 	}
 
-	// Helper function to get fragment content with translation
-	getFragmentContent := func(frag lyric.LRCFragment) string {
-		content := frag.Content
-		if state.ShowTranslation {
-			if trans, ok := state.TranslatedFragments[frag.StartTimeMs]; ok && trans != "" {
-				content += " [" + trans + "]"
-			}
+	// Helper function to get fragment translation; layout decides placement
+	getFragmentTranslation := func(frag lyric.LRCFragment) string {
+		if !state.ShowTranslation {
+			return ""
 		}
-		return content
+		return state.TranslatedFragments[frag.StartTimeMs]
 	}
 
 	// Helper function to render plain gray text (for non-current lines)
@@ -388,7 +392,7 @@ func (r *LyricRenderer) renderLRCWithMode(state lyric.State, centerIndex int, cu
 	// Fill current line (with color gradient effect)
 	if state.CurrentIndex >= 0 && state.CurrentIndex < len(state.Fragments) {
 		currentFrag := state.Fragments[state.CurrentIndex]
-		content := getFragmentContent(currentFrag)
+		content := currentFrag.Content
 
 		// Calculate current line progress
 		var currentProgress float64
@@ -400,15 +404,14 @@ func (r *LyricRenderer) renderLRCWithMode(state lyric.State, centerIndex int, cu
 			currentProgress = calculateLineProgress(currentFrag.StartTimeMs, currentFrag.StartTimeMs+5000)
 		}
 
-		r.lyrics[centerIndex] = renderLineWithMode(content, currentProgress)
+		r.lyrics[centerIndex] = lyricEntry{text: renderLineWithMode(content, currentProgress), trans: getFragmentTranslation(currentFrag)}
 	}
 
 	// Fill previous lines (gray - already played)
 	for i := 1; i <= centerIndex; i++ {
 		if state.CurrentIndex-i >= 0 {
 			prevFrag := state.Fragments[state.CurrentIndex-i]
-			content := getFragmentContent(prevFrag)
-			r.lyrics[centerIndex-i] = renderPlainGray(content)
+			r.lyrics[centerIndex-i] = lyricEntry{text: renderPlainGray(prevFrag.Content), trans: getFragmentTranslation(prevFrag)}
 		}
 	}
 
@@ -416,8 +419,7 @@ func (r *LyricRenderer) renderLRCWithMode(state lyric.State, centerIndex int, cu
 	for i := 1; i < r.lyricLines-centerIndex; i++ {
 		if state.CurrentIndex+i < len(state.Fragments) {
 			nextFrag := state.Fragments[state.CurrentIndex+i]
-			content := getFragmentContent(nextFrag)
-			r.lyrics[centerIndex+i] = renderPlainGray(content)
+			r.lyrics[centerIndex+i] = lyricEntry{text: renderPlainGray(nextFrag.Content), trans: getFragmentTranslation(nextFrag)}
 		}
 	}
 }
@@ -433,21 +435,17 @@ func (r *LyricRenderer) buildLyricsCentered(_ *model.Main, lyricBuilder *strings
 	// grouped and centered together instead of drifting to opposite sides.
 	_, lyricStartCol, availableWidth := centeredCoverLyricLayout(windowWidth, coverWidth)
 
-	// 以 lyrics 数组的中心为高亮行（3 行模式索引 1，5 行模式索引 2）。
-	highlightLine := (r.lyricLines - 1) / 2
-	startLine := highlightLine - (r.lyricLines-1)/2
-	endLine := highlightLine + (r.lyricLines-1)/2
 	extraPadding := MinLyricExtraPadding + max(0, (availableWidth-LyricBaseWidth)/LyricPaddingDivisor)
 	lyricsMaxLength := availableWidth - extraPadding
 	if lyricsMaxLength < MinLyricWidth {
 		lyricsMaxLength = MinLyricWidth
 	}
 
-	for i := startLine; i <= endLine; i++ {
-		line := r.lyrics[i]
+	for _, row := range layoutLyricRows(r.lyrics, (r.lyricLines-1)/2, r.lyricLines, r.inlineWidth > lyricsMaxLength) {
+		line := row.text
 		hasAnsi := strings.Contains(line, "\033[")
 
-		if i == highlightLine && !hasAnsi {
+		if row.highlight && !hasAnsi {
 			line = r.lyricNowScrollBar.Tick(lyricsMaxLength, line)
 			line = strings.Trim(line, " ")
 		}
@@ -473,7 +471,7 @@ func (r *LyricRenderer) buildLyricsCentered(_ *model.Main, lyricBuilder *strings
 		lyricBuilder.WriteString(strings.Repeat(" ", paddingLeft))
 
 		if !hasAnsi {
-			if i == highlightLine {
+			if row.highlight {
 				line = styleLyricText(line, lyricActiveColor())
 			} else {
 				line = styleLyricText(line, lyricInactiveColor())
@@ -517,12 +515,11 @@ func (r *LyricRenderer) buildLyricsTraditional(main *model.Main, lyricBuilder *s
 		maxLen = MinLyricWidth
 	}
 
-	renderLine := func(idx int, isHighlight bool) {
+	renderLine := func(line string, isHighlight bool) {
 		if startCol > 0 {
 			lyricBuilder.WriteString(strings.Repeat(" ", startCol))
 		}
 
-		line := r.lyrics[idx]
 		hasAnsi := strings.Contains(line, "\033[")
 
 		var lyricLine string
@@ -564,15 +561,8 @@ func (r *LyricRenderer) buildLyricsTraditional(main *model.Main, lyricBuilder *s
 		lyricBuilder.WriteString("\n")
 	}
 
-	switch r.lyricLines {
-	case 3:
-		for i := range 3 {
-			renderLine(i, i == 1)
-		}
-	case 5:
-		for i := range 5 {
-			renderLine(i, i == 2)
-		}
+	for _, row := range layoutLyricRows(r.lyrics, (r.lyricLines-1)/2, r.lyricLines, r.inlineWidth > maxLen) {
+		renderLine(row.text, row.highlight)
 	}
 }
 

@@ -58,7 +58,7 @@ func TestLyricTextLeavesCoverPaddingTransparent(t *testing.T) {
 	withAppBackgroundTheme(t, appBg)
 
 	r := &LyricRenderer{netease: netease, lyricLines: 3, lyricNowScrollBar: appui.NewXScrollBar()}
-	r.lyrics = []string{"上一句歌词", "当前高亮歌词", "下一句歌词"}
+	r.lyrics = textEntries("上一句歌词", "当前高亮歌词", "下一句歌词")
 
 	var b strings.Builder
 	r.buildLyricsTraditional(app.MustMain(), &b)
@@ -85,7 +85,7 @@ func TestLyricTraditionalFillsFullWidth(t *testing.T) {
 
 	r := &LyricRenderer{netease: netease, lyricLines: 3, lyricNowScrollBar: appui.NewXScrollBar()}
 	// Plain strings mirror the real "no lyric" placeholders (作曲：… / 纯音乐，请欣赏).
-	r.lyrics = []string{"作曲：和乐府", "纯音乐，请欣赏", ""}
+	r.lyrics = textEntries("作曲：和乐府", "纯音乐，请欣赏", "")
 
 	var b strings.Builder
 	r.buildLyricsTraditional(app.MustMain(), &b)
@@ -112,7 +112,7 @@ func TestLyricCenteredTextLeavesCoverPaddingTransparent(t *testing.T) {
 	main := app.MustMain()
 
 	r := &LyricRenderer{netease: netease, lyricLines: 3, lyricNowScrollBar: appui.NewXScrollBar()}
-	r.lyrics = []string{"上一句", "居中高亮歌词", "下一句"}
+	r.lyrics = textEntries("上一句", "居中高亮歌词", "下一句")
 
 	var b strings.Builder
 	r.buildLyricsCentered(main, &b)
@@ -142,11 +142,11 @@ func TestLyricYRCLineLeavesCoverPaddingTransparent(t *testing.T) {
 	sibling := lyric.YRCLine{StartTime: 0, EndTime: 1, Words: []lyric.YRCWord{
 		{Word: "相邻歌词"},
 	}, TranslatedLyric: "sibling-trans"}
-	r.lyrics = []string{
+	r.lyrics = textEntries(
 		r.buildYRCLineString(sibling, -1, true),   // previous (inactive)
 		r.buildYRCLineString(current, 1500, true), // current (highlighted + translation)
 		r.buildYRCLineString(sibling, -1, true),   // next (inactive)
-	}
+	)
 
 	var b strings.Builder
 	r.buildLyricsTraditional(app.MustMain(), &b)

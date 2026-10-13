@@ -143,6 +143,9 @@ skipParseErr = false
 # YRC 歌词渲染模式（仅对逐字歌词有效）
 # 可选: "simple"(简单，默认), "smooth"(平滑), "wave"(波浪), "glow"(发光)
 renderMode = "smooth"
+# 歌词最多显示行数（随可用高度自动缩小，取奇数保证当前行居中；竖屏/高窗口可调大，默认 5）
+# 翻译放不下同一行时会显示在原文下一行，并占用一行
+maxLines = 5
 
 # 封面图显示设置（需要支持Kitty图形协议的终端，如Kitty、WezTerm、Ghostty等）
 [main.lyric.cover]

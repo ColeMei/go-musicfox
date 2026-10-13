@@ -205,6 +205,8 @@ type LyricConfig struct {
 	SkipParseErr bool `koanf:"skipParseErr"`
 	// 歌词渲染模式：smooth(平滑), wave(波浪), glow(发光)
 	RenderMode string `koanf:"renderMode"`
+	// 歌词最多显示行数（竖屏/高窗口可调大，默认 5）
+	MaxLines int `koanf:"maxLines"`
 	// 封面图设置
 	Cover CoverConfig `koanf:"cover"`
 	// 桌面歌词设置
