@@ -1442,6 +1442,10 @@ type menuItemViewCacheEntry struct {
 	width         int
 }
 
+// dualColumnRightMargin is the blank margin (columns) kept after the right
+// column in wide dual-column layouts.
+const dualColumnRightMargin = 4
+
 func (m *Main) menuItemView(a *App, index int) (string, int) {
 	var (
 		menuItemBuilder strings.Builder
@@ -1502,7 +1506,9 @@ func (m *Main) menuItemView(a *App, index int) (string, int) {
 			if index%2 == 0 {
 				itemMaxLen = 44
 			} else {
-				itemMaxLen = windowWidth - m.menuStartColumn - 44
+				// go-musicfox fork: keep a right margin so the right column
+				// does not run into the window edge.
+				itemMaxLen = max(windowWidth-m.menuStartColumn-44-dualColumnRightMargin, 0)
 			}
 		}
 	} else {

@@ -220,6 +220,8 @@ make vendor
 
 #### foxful-cli 依赖更新流程
 
+> **本 fork 的 vendor 补丁**：`vendor/github.com/anhoder/foxful-cli/model/main.go` 的 `menuItemView` 为宽屏双列右列预留 `dualColumnRightMargin`（4 列）右边距（回归测试 `internal/ui/menu_right_margin_test.go`）。执行 `make vendor` 会覆盖该补丁，需重新应用。
+
 foxful-cli 是本项目的核心 UI 框架，位于 `vendor/github.com/anhoder/foxful-cli/`。更新流程：
 
 1. 在 `go.mod` 中使用 `replace` 指向本地 foxful-cli 仓库开发
