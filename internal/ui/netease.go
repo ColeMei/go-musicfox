@@ -99,6 +99,7 @@ func NewNetease(app *model.App) *Netease {
 	n.desktopLyrics = desktop_lyrics.NewController(configs.AppConfig.Main.Lyric.DesktopLyrics)
 
 	n.player = NewPlayer(n, n.lyricService)
+	n.trackManager.SetStreamFailureHandler(n.player.handleStreamFailure)
 
 	n.lyricRenderer = NewLyricRenderer(n, n.lyricService, showLyric)
 	n.songInfoRenderer = NewSongInfoRenderer(n, n.player)

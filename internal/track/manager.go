@@ -47,6 +47,8 @@ type Manager struct {
 	quality     service.SongQualityLevel
 	sfGroup     singleflight.Group
 	cloudUserID atomic.Int64
+
+	streamFailureHandler atomic.Pointer[func(songID int64, err error)]
 }
 
 // ManagerOption 是用于配置 Manager 的函数类型。
@@ -271,6 +273,13 @@ func (m *Manager) SetCloudUserID(userID int64) {
 	m.cloudUserID.Store(userID)
 }
 
+// SetStreamFailureHandler registers a callback invoked when the background
+// cache fails to open a song's remote stream. The engine streams the same URL,
+// so callers use it as an early signal that playback is stuck.
+func (m *Manager) SetStreamFailureHandler(handler func(songID int64, err error)) {
+	m.streamFailureHandler.Store(&handler)
+}
+
 func (m *Manager) ClearCache() error {
 	slog.Info("Clearing all song cache...")
 	return m.cacher.Clear()
@@ -350,6 +359,9 @@ func (m *Manager) backgroundCache(ctx context.Context, source PlayableSource) {
 		stream, err := m.fetcher.FetchStream(ctx, source)
 		if err != nil {
 			slog.Error("Background cache: fetch stream failed", "songId", source.Id, "error", err)
+			if handler := m.streamFailureHandler.Load(); handler != nil {
+				(*handler)(source.Id, err)
+			}
 			return nil, err
 		}
 		defer stream.Close()

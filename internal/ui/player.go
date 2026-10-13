@@ -91,6 +91,8 @@ type Player struct {
 
 	renderTicker *tickerByPlayer // renderTicker 用于渲染
 
+	stall stallGuard // 远程歌曲起播卡住时自动换 URL 重试
+
 	// mprisPosThrottle 限制 MPRIS Position 属性更新频率：每个时间 tick 都
 	// 广播会以 UI 帧率灌满 DBus 会话总线（60fps 时 60 次/秒）。
 	mprisPosThrottle mprisPositionThrottle
@@ -305,6 +307,7 @@ func (p *Player) PlaySong(song structs.Song, direction PlayDirection) {
 		Type: player.SongTypeMapping[musicType],
 	})
 	slog.Info("Start play song", slog.String("url", url), slog.String("type", musicType), slog.Any("song", song))
+	p.watchStartup(song.Id, url)
 
 	// 上报开始播放
 	p.reporter.ReportStart(song)
